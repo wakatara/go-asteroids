@@ -6,6 +6,7 @@ import (
 	_ "image/png"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/colorm"
 )
 
 //go:embed assets
@@ -35,7 +36,10 @@ func (g *Game) Update() error {
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
-
+	op := &colorm.DrawImageOptions{}
+	cm := colorm.ColorM{}
+	cm.Scale(1.0, 1.0, 1.0, 0.5)
+	colorm.DrawImage(screen, PlayerSprite, cm, op)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
