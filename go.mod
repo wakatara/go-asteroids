@@ -1,6 +1,6 @@
 module github.com/wakatara/go-asteroids
 
-go 1.21.4
+go 1.21.5
 
 require github.com/hajimehoshi/ebiten/v2 v2.6.3
 
