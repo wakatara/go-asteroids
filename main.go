@@ -23,6 +23,45 @@ var assets embed.FS
 
 var PlayerSprite = mustLoadImage("assets/player.png")
 var MeteorSprites = mustLoadImages("assets/meteors/*.png")
+var LaserSprite = mustLoadImage("assets/laser_sprite.png")
+var bulletSpeedPerSecond = 350.0
+var bulletSpawnOffset = 50.0
+
+const shootCooldown = time.Millisecond * 500
+
+type Game struct {
+	player           *Player
+	meteorSpawnTimer *Timer
+	meteors          []*Meteor
+	bullets          []*Bullet
+}
+
+type Player struct {
+	game          *Game
+	position      Vector
+	rotation      float64
+	sprite        *ebiten.Image
+	shootCooldown *Timer
+}
+
+type Meteor struct {
+	position      Vector
+	rotation      float64
+	movement      Vector
+	rotationSpeed float64
+	sprite        *ebiten.Image
+}
+
+type Bullet struct {
+	position Vector
+	rotation float64
+	sprite   *ebiten.Image
+}
+
+type Timer struct {
+	currentTicks int
+	targetTicks  int
+}
 
 type Vector struct {
 	X float64
@@ -63,10 +102,19 @@ func mustLoadImages(path string) []*ebiten.Image {
 	return images
 }
 
-type Game struct {
-	player           *Player
-	meteorSpawnTimer *Timer
-	meteors          []*Meteor
+func NewGame() *Game {
+	g := &Game{
+		// meteorSpawnTimer: NewTimer(meteorSpawnTime),
+		// baseVelocity:     baseMeteorVelocity,
+		// velocityTimer:    NewTimer(meteorSpeedUpTime),
+	}
+
+	g.player = NewPlayer(g)
+	g.meteorSpawnTimer = NewTimer(5000)
+	g.meteors = make([]*Meteor, 0)
+	g.bullets = make([]*Bullet, 0)
+
+	return g
 }
 
 func (g *Game) Update() error {
@@ -83,6 +131,28 @@ func (g *Game) Update() error {
 	for _, m := range g.meteors {
 		m.Update()
 	}
+
+	for _, b := range g.bullets {
+		b.Update()
+	}
+
+	for i, m := range g.meteors {
+		for j, b := range g.bullets {
+			if m.Collider().Intersects(b.Collider()) {
+				// A meteor collided with a bullet
+				g.meteors = append(g.meteors[:i], g.meteors[i+1:]...)
+				g.bullets = append(g.bullets[:j], g.bullets[j+1:]...)
+			}
+		}
+	}
+
+	for _, m := range g.meteors {
+		if m.Collider().Intersects(g.player.Collider()) {
+			// A meteor collided with the player
+			g.Reset()
+		}
+	}
+
 	return nil
 }
 
@@ -93,19 +163,21 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		m.Draw(screen)
 	}
 
+	for _, b := range g.bullets {
+		b.Draw(screen)
+	}
+
+}
+
+func (g *Game) AddBullet(b *Bullet) {
+	g.bullets = append(g.bullets, b)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return ScreenWidth, ScreenHeight
 }
 
-type Player struct {
-	position Vector
-	rotation float64
-	sprite   *ebiten.Image
-}
-
-func NewPlayer() *Player {
+func NewPlayer(game *Game) *Player {
 	sprite := PlayerSprite
 
 	bounds := sprite.Bounds()
@@ -118,8 +190,11 @@ func NewPlayer() *Player {
 	}
 
 	return &Player{
-		position: pos,
-		sprite:   PlayerSprite,
+		game:          game,
+		position:      pos,
+		rotation:      0,
+		sprite:        PlayerSprite,
+		shootCooldown: NewTimer(shootCooldown),
 	}
 }
 
@@ -131,6 +206,23 @@ func (p *Player) Update() {
 	}
 	if ebiten.IsKeyPressed(ebiten.KeyRight) {
 		p.rotation += speed
+	}
+
+	p.shootCooldown.Update()
+	if p.shootCooldown.IsReady() && ebiten.IsKeyPressed(ebiten.KeySpace) {
+		p.shootCooldown.Reset()
+
+		bounds := p.sprite.Bounds()
+		halfW := float64(bounds.Dx()) / 2
+		halfH := float64(bounds.Dy()) / 2
+
+		spawnPos := Vector{
+			p.position.X + halfW + math.Sin(p.rotation)*bulletSpawnOffset,
+			p.position.Y + halfH + math.Cos(p.rotation)*-bulletSpawnOffset,
+		}
+
+		bullet := NewBullet(spawnPos, p.rotation)
+		p.game.AddBullet(bullet)
 	}
 }
 
@@ -149,12 +241,15 @@ func (p *Player) Draw(screen *ebiten.Image) {
 	screen.DrawImage(p.sprite, op)
 }
 
-type Meteor struct {
-	position      Vector
-	rotation      float64
-	movement      Vector
-	rotationSpeed float64
-	sprite        *ebiten.Image
+func (p *Player) Collider() Rect {
+	bounds := p.sprite.Bounds()
+
+	return NewRect(
+		p.position.X,
+		p.position.Y,
+		float64(bounds.Dx()),
+		float64(bounds.Dy()),
+	)
 }
 
 func NewMeteor() *Meteor {
@@ -217,9 +312,67 @@ func (m *Meteor) Draw(screen *ebiten.Image) {
 	screen.DrawImage(m.sprite, op)
 }
 
-type Timer struct {
-	currentTicks int
-	targetTicks  int
+func (m *Meteor) Collider() Rect {
+	bounds := m.sprite.Bounds()
+
+	return NewRect(
+		m.position.X,
+		m.position.Y,
+		float64(bounds.Dx()),
+		float64(bounds.Dy()),
+	)
+}
+
+func NewBullet(pos Vector, rotation float64) *Bullet {
+	sprite := LaserSprite
+
+	bounds := sprite.Bounds()
+	halfW := float64(bounds.Dx()) / 2
+	halfH := float64(bounds.Dy()) / 2
+
+	pos.X -= halfW
+	pos.Y -= halfH
+
+	b := &Bullet{
+		position: pos,
+		rotation: rotation,
+		sprite:   sprite,
+	}
+
+	return b
+}
+
+func (b *Bullet) Update() {
+	speed := bulletSpeedPerSecond / float64(ebiten.TPS())
+
+	b.position.X += math.Sin(b.rotation) * speed
+	b.position.Y += math.Cos(b.rotation) * -speed
+}
+
+func (b *Bullet) Draw(screen *ebiten.Image) {
+	bounds := b.sprite.Bounds()
+	halfW := float64(bounds.Dx()) / 2
+	halfH := float64(bounds.Dy()) / 2
+
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(-halfW, -halfH)
+	op.GeoM.Rotate(b.rotation)
+	op.GeoM.Translate(halfW, halfH)
+
+	op.GeoM.Translate(b.position.X, b.position.Y)
+
+	screen.DrawImage(b.sprite, op)
+}
+
+func (b *Bullet) Collider() Rect {
+	bounds := b.sprite.Bounds()
+
+	return NewRect(
+		b.position.X,
+		b.position.Y,
+		float64(bounds.Dx()),
+		float64(bounds.Dy()),
+	)
 }
 
 func NewTimer(d time.Duration) *Timer {
@@ -243,16 +396,46 @@ func (t *Timer) Reset() {
 	t.currentTicks = 0
 }
 
+type Rect struct {
+	X      float64
+	Y      float64
+	Width  float64
+	Height float64
+}
+
+func NewRect(x, y, width, height float64) Rect {
+	return Rect{
+		X:      x,
+		Y:      y,
+		Width:  width,
+		Height: height,
+	}
+}
+
+func (r Rect) MaxX() float64 {
+	return r.X + r.Width
+}
+
+func (r Rect) MaxY() float64 {
+	return r.Y + r.Height
+}
+
+func (r Rect) Intersects(other Rect) bool {
+	return r.X <= other.MaxX() &&
+		other.X <= r.MaxX() &&
+		r.Y <= other.MaxY() &&
+		other.Y <= r.MaxY()
+}
+
+func (g *Game) Reset() {
+	g.player = NewPlayer(g)
+	g.meteors = nil
+	g.bullets = nil
+}
+
 func main() {
-	Meteors := []*Meteor{}
-	for i := 0; i < 5; i++ {
-		Meteors[i] = NewMeteor()
-	}
-	g := &Game{
-		NewPlayer(),
-		NewTimer(5000),
-		Meteors,
-	}
+	g := NewGame()
+	g.player = NewPlayer(g)
 
 	err := ebiten.RunGame(g)
 	if err != nil {
